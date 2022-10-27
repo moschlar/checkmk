@@ -90,6 +90,7 @@ DEFAULT_CFG_SECTION = {
     "base_url": "unix://var/run/docker.sock",
     "skip_sections": "",
     "container_id": "short",
+    "only_running": False,
 }
 
 LOGGER = logging.getLogger(__name__)
@@ -141,6 +142,7 @@ def get_config(cfg_file):
     LOGGER.info("read configration file(s): %r", files_read)
     section_name = "DOCKER" if config.sections() else "DEFAULT"
     conf_dict = dict(config.items(section_name))  # type: Dict[str, Union[str, Tuple]]
+    conf_dict["only_running"] = config.getboolean(section_name, "only_running")
     skip_sections = conf_dict.get("skip_sections", "")
     if isinstance(skip_sections, str):
         skip_list = skip_sections.split(",")
@@ -270,7 +272,10 @@ class MKDockerClient(docker.DockerClient):
 
     def __init__(self, config):
         super().__init__(config["base_url"], version=MKDockerClient.API_VERSION)
-        all_containers = _robust_inspect(self, "containers")
+        filters = None
+        if config["only_running"]:
+            filters = {"status": "running"}
+        all_containers = _robust_inspect(self, "containers", filters)
         if config["container_id"] == "name":
             self.all_containers = {c.attrs["Name"].lstrip("/"): c for c in all_containers}
         elif config["container_id"] == "long":
@@ -459,7 +464,7 @@ def section_node_disk_usage(client):
     section.write()
 
 
-def _robust_inspect(client, docker_object):
+def _robust_inspect(client, docker_object, filters=None):
     object_map = {
         "images": {
             "api": client.api.images,
@@ -478,6 +483,8 @@ def _robust_inspect(client, docker_object):
     api = object_map[docker_object]["api"]
     getter = object_map[docker_object]["getter"]
     kwargs = object_map[docker_object]["kwargs"]
+    if filters:
+        kwargs["filters"] = filters
     # workaround instead of calling client.OBJECT.list() directly to be able to
     # ignore errors when OBJECT was removed in between listing available OBJECT
     # and getting detailed information about them
